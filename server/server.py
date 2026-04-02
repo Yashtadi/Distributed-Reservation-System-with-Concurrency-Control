@@ -44,6 +44,16 @@ class ReservationServer:
         self._primary_repl: PrimaryReplicator | None = None
         self._promoted = asyncio.Event()
 
+    async def stop(self) -> None:
+        if self._client_server is not None:
+            self._client_server.close()
+            await self._client_server.wait_closed()
+            self._client_server = None
+
+        if self._primary_repl is not None:
+            await self._primary_repl.stop()
+            self._primary_repl = None
+
     async def start(self) -> None:
         if self._role not in ("primary", "backup"):
             raise ValueError("role must be 'primary' or 'backup'")
@@ -132,6 +142,22 @@ class ReservationServer:
                 train = payload["train"]
                 data = self._db.search(train)
                 return self._ok(req_id, data, ts)
+            elif cmd == "TIER_SEATS":
+                train = payload["train"]
+                tier = payload["tier"]
+                try:
+                    data = self._db.tier_available_seat_numbers(train, tier)
+                except ValueError as e:
+                    return self._error(req_id, "NOT_FOUND", str(e), ts)
+                return self._ok(req_id, data, ts)
+            elif cmd == "COACH_SEATS":
+                train = payload["train"]
+                coach = payload["coach"]
+                try:
+                    data = self._db.coach_available_seats(train, coach)
+                except ValueError as e:
+                    return self._error(req_id, "NOT_FOUND", str(e), ts)
+                return self._ok(req_id, data, ts)
             elif cmd == "HOLD":
                 train = payload["train"]
                 coach = payload["coach"]
@@ -150,6 +176,20 @@ class ReservationServer:
                 if "tier" in payload:
                     train = payload["train"]
                     tier = payload["tier"]
+                    if "seat" in payload:
+                        seat = int(payload["seat"])
+                        key = f"{train}-TIERSEAT-{tier}-{seat}"
+                        acquired = await self._locks.acquire(key, timeout=5.0)
+                        if not acquired:
+                            return self._error(req_id, "LOCK_TIMEOUT", "seat busy", ts)
+                        try:
+                            info = self._db.book_by_tier_and_seat_number(train, tier, seat, client_id)
+                        except ValueError as e:
+                            self._locks.release(key)
+                            return self._error(req_id, "BOOK_FAILED", str(e), ts)
+                        self._locks.release(key)
+                        return self._ok(req_id, info, ts)
+
                     key = f"{train}-TIER-{tier}"
                     acquired = await self._locks.acquire(key, timeout=5.0)
                     if not acquired:
@@ -264,9 +304,17 @@ async def main() -> None:
         hb_interval_s=args.hb_interval,
         hb_timeout_s=args.hb_timeout,
     )
-    await server.start()
+    try:
+        await server.start()
+    except asyncio.CancelledError:
+        print("[server] Shutdown requested.")
+    finally:
+        await server.stop()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("[server] Stopped by user.")
 

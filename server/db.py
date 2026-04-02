@@ -337,6 +337,52 @@ class InMemoryDB:
         _, _, seat = self._get_seat(train_id, coach_id, seat_num)
         return asdict(seat)
 
+    def coach_available_seats(self, train_id: str, coach_id: str) -> dict:
+        train = self.trains.get(train_id)
+        if train is None:
+            raise ValueError("train not found")
+        coach = train.coaches.get(coach_id)
+        if coach is None:
+            raise ValueError("coach not found")
+
+        self._expire_holds()
+        available_numbers: list[int] = []
+        for seat in coach.seats.values():
+            if seat.state != "available":
+                continue
+            # seat_id format: <train>-<coach>-<seat_number>
+            seat_num = int(seat.seat_id.rsplit("-", 1)[1])
+            available_numbers.append(seat_num)
+        available_numbers.sort()
+        return {
+            "train": train_id,
+            "coach": coach_id,
+            "available_seat_numbers": available_numbers,
+            "available_count": len(available_numbers),
+        }
+
+    def tier_available_seat_numbers(self, train_id: str, tier: str) -> dict:
+        train = self.trains.get(train_id)
+        if train is None:
+            raise ValueError("train not found")
+
+        self._expire_holds()
+        available_numbers: set[int] = set()
+        for coach in train.coaches.values():
+            for seat in coach.seats.values():
+                if seat.tier != tier or seat.state != "available":
+                    continue
+                seat_num = int(seat.seat_id.rsplit("-", 1)[1])
+                available_numbers.add(seat_num)
+
+        numbers = sorted(available_numbers)
+        return {
+            "train": train_id,
+            "tier": tier,
+            "available_seat_numbers": numbers,
+            "available_count": len(numbers),
+        }
+
     # --- Tier-based booking and waiting list management ---
 
     def _iter_seats_for_tier(self, train_id: str, tier: str):
@@ -522,6 +568,54 @@ class InMemoryDB:
             "ticket": asdict(self.tickets[ticket_id]),
             "ticket_status": "waiting",
             "waiting_position": position,
+        }
+
+    def book_by_tier_and_seat_number(
+        self, train_id: str, tier: str, seat_number: int, client_id: str
+    ) -> dict:
+        """
+        Book a specific seat number within a tier.
+        """
+        now = time.time()
+        self._expire_holds(now)
+        seat_suffix = f"-{seat_number}"
+
+        chosen_seat: Optional[Seat] = None
+        for seat in self._iter_seats_for_tier(train_id, tier):
+            if seat.state != "available":
+                continue
+            if seat.seat_id.endswith(seat_suffix):
+                chosen_seat = seat
+                break
+
+        if chosen_seat is None:
+            raise ValueError("requested seat number not available in this tier")
+
+        ticket_id = f"TKT-{int(now * 1000)}-{len(self.tickets) + 1}"
+        self._book_tier_no_log(
+            ticket_id=ticket_id,
+            client_id=client_id,
+            train_id=train_id,
+            tier=tier,
+            seat_id=chosen_seat.seat_id,
+            status="confirmed",
+            ts=now,
+        )
+        self._wal.append(
+            {
+                "op": "BOOK_TIER",
+                "ticket_id": ticket_id,
+                "client": client_id,
+                "train": train_id,
+                "tier": tier,
+                "seat_id": chosen_seat.seat_id,
+                "status": "confirmed",
+                "ts": now,
+            }
+        )
+        return {
+            "ticket": asdict(self.tickets[ticket_id]),
+            "ticket_status": "confirmed",
         }
 
     def get_ticket_metadata(self, ticket_id: str) -> Optional[Tuple[str, str]]:
