@@ -2,10 +2,6 @@ import asyncio
 from typing import Dict
 
 
-class LockTimeoutError(Exception):
-    pass
-
-
 class LockManager:
     """
     Simple per-key asyncio lock manager.

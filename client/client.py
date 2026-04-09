@@ -40,9 +40,6 @@ class Client:
     async def search(self, train: str) -> Dict[str, Any]:
         return await self._send("SEARCH", {"train": train})
 
-    async def coach_available_seats(self, train: str, coach: str) -> Dict[str, Any]:
-        return await self._send("COACH_SEATS", {"train": train, "coach": coach})
-
     async def tier_available_seats(self, train: str, tier: str) -> Dict[str, Any]:
         return await self._send("TIER_SEATS", {"train": train, "tier": tier})
 
@@ -51,9 +48,6 @@ class Client:
 
     async def book_tier_seat(self, train: str, tier: str, seat: int) -> Dict[str, Any]:
         return await self._send("BOOK", {"train": train, "tier": tier, "seat": seat})
-
-    async def book_seat(self, train: str, coach: str, seat: int) -> Dict[str, Any]:
-        return await self._send("BOOK", {"train": train, "coach": coach, "seat": seat})
 
     async def cancel_ticket(self, ticket_id: str) -> Dict[str, Any]:
         return await self._send("CANCEL", {"ticket_id": ticket_id})

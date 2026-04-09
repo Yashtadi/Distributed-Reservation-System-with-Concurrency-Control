@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set
 
 from .db import InMemoryDB, Wal
 from .protocol import read_message, write_message
@@ -39,12 +39,6 @@ class PrimaryReplicator:
         self._tasks.append(asyncio.create_task(self._heartbeat_loop()))
         addrs = ", ".join(str(sock.getsockname()) for sock in self._server.sockets or [])
         print(f"[repl-primary] Serving replication on {addrs}")
-
-    async def serve_forever(self) -> None:
-        if not self._server:
-            raise RuntimeError("replicator not started")
-        async with self._server:
-            await self._server.serve_forever()
 
     async def stop(self) -> None:
         for t in self._tasks:
